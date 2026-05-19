@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { searchCars, type SearchResponse, type CarListing, type ModelInfo } from "@/lib/api";
 import CarCard from "@/components/CarCard";
@@ -92,7 +92,7 @@ function ModelOverviewCard({ info, filters }: { info: ModelInfo; filters: Record
   );
 }
 
-export default function ResultsPage() {
+function ResultsPageInner() {
   const params = useSearchParams();
   const router = useRouter();
   const query = params.get("q") || "";
@@ -445,5 +445,13 @@ export default function ResultsPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function ResultsPage() {
+  return (
+    <Suspense>
+      <ResultsPageInner />
+    </Suspense>
   );
 }
