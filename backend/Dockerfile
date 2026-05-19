@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # Install system dependencies required by Playwright/Chromium
 RUN apt-get update && apt-get install -y \
@@ -15,7 +15,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Chromium browser for Playwright
+# Install Chromium browser for Playwright (bookworm deps work correctly)
 RUN playwright install chromium
 RUN playwright install-deps chromium
 
