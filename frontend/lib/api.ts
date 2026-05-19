@@ -45,7 +45,8 @@ export function proxyImage(url: string | null): string | null {
 }
 
 export async function searchCars(query: string): Promise<SearchResponse> {
-  const res = await fetch(`${API_URL}/search`, {
+  const url = `${API_URL}/search`;
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
@@ -53,10 +54,8 @@ export async function searchCars(query: string): Promise<SearchResponse> {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(
-      (err as { detail?: string }).detail || `Server error: ${res.status}`
-    );
+    const body = await res.text().catch(() => "");
+    throw new Error(`[${res.status}] ${url} — ${body.slice(0, 200) || "no body"}`);
   }
 
   return res.json();
