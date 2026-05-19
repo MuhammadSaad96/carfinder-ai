@@ -37,7 +37,7 @@ def _olx_in_thread(filters: dict) -> list:
 async def _scrape_pakwheels(filters: dict) -> list:
     try:
         scraper = PakWheelsScraper()
-        cars = await asyncio.wait_for(scraper.scrape(filters, max_results=25), timeout=60)
+        cars = await asyncio.wait_for(scraper.scrape(filters, max_results=15), timeout=28)
         for c in cars:
             c["source"] = "pakwheels"
         logger.info(f"PakWheels returned {len(cars)} cars")
@@ -55,13 +55,13 @@ async def _scrape_olx(filters: dict) -> list:
         loop = asyncio.get_running_loop()
         cars = await asyncio.wait_for(
             loop.run_in_executor(_playwright_pool, _olx_in_thread, filters),
-            timeout=65,
+            timeout=32,
         )
         result = cars or []
         logger.info(f"OLX returned {len(result)} cars")
         return result
     except asyncio.TimeoutError:
-        logger.warning("OLX scraper timed out (65s)")
+        logger.warning("OLX scraper timed out (32s)")
         return []
     except Exception as e:
         logger.error(f"OLX scraper error: {e}")
@@ -151,16 +151,7 @@ async def search(request: SearchRequest):
     for car in top_10:
         car["is_recommended"] = True
 
-    # 5. Generate AI explanations as ordered list (avoids title-key mismatch)
-    explanations = await generate_explanations(request.query, top_10, filters)
-    logger.info(f"Explanations: got {len(explanations)} for {len(top_10)} cars")
-    for i, car in enumerate(top_10):
-        expl = explanations[i] if i < len(explanations) else ""
-        car["ai_explanation"] = expl if (isinstance(expl, str) and expl.strip()) else ""
-        if i < 3:
-            logger.info(f"  Car {i+1} ai_explanation set: {repr(car['ai_explanation'][:80]) if car['ai_explanation'] else 'EMPTY'}")
-
-    # 5b. Vision AI: assess car condition — max 2 concurrent to avoid Groq rate limits
+    # 5. Run AI explanations + vision + summary in parallel to minimise total latency
     _vision_sem = asyncio.Semaphore(2)
 
     async def _vision_for(car: dict) -> Optional[str]:
@@ -171,20 +162,40 @@ async def search(request: SearchRequest):
             return await analyze_car_image(imgs[:2], car["title"], car.get("source", "pakwheels"))
 
     vision_cars = top_10[:TOP_CARS_FOR_VISION]
-    try:
-        condition_results = await asyncio.wait_for(
-            asyncio.gather(*[_vision_for(c) for c in vision_cars], return_exceptions=True),
-            timeout=50,
-        )
-    except asyncio.TimeoutError:
-        logger.warning("Vision analysis timed out — skipping remaining")
-        condition_results = []
+
+    async def _run_vision() -> list:
+        if not vision_cars:
+            return []
+        try:
+            return await asyncio.wait_for(
+                asyncio.gather(*[_vision_for(c) for c in vision_cars], return_exceptions=True),
+                timeout=15,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Vision timed out")
+            return []
+
+    results = await asyncio.gather(
+        generate_explanations(request.query, top_10, filters),
+        _run_vision(),
+        generate_summary(request.query, top_10, filters),
+        return_exceptions=True,
+    )
+
+    explanations     = results[0] if isinstance(results[0], list) else []
+    condition_results = results[1] if isinstance(results[1], list) else []
+    ai_summary       = results[2] if isinstance(results[2], str)  else f"{len(top_10)} cars found."
+
+    logger.info(f"Explanations: got {len(explanations)} for {len(top_10)} cars")
+    for i, car in enumerate(top_10):
+        expl = explanations[i] if i < len(explanations) else ""
+        car["ai_explanation"] = expl if (isinstance(expl, str) and expl.strip()) else ""
+        if i < 3:
+            logger.info(f"  Car {i+1} ai_explanation: {repr(car['ai_explanation'][:60]) if car['ai_explanation'] else 'EMPTY'}")
+
     for car, note in zip(vision_cars, condition_results):
         if isinstance(note, str) and note:
             car["condition_note"] = note
-
-    # 6. Generate AI summary
-    ai_summary = await generate_summary(request.query, top_10, filters)
 
     # 7. Return ALL cars — top 10 first (with AI), then remaining by score
     top_10_urls = {c.get("url") for c in top_10}

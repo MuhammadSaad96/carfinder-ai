@@ -54,8 +54,10 @@ export async function searchCars(query: string): Promise<SearchResponse> {
   });
 
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`[${res.status}] ${url} — ${body.slice(0, 200) || "no body"}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err as { detail?: string }).detail || `Server error: ${res.status}`
+    );
   }
 
   return res.json();
